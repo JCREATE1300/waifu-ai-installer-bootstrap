@@ -1,0 +1,23 @@
+[package]
+name = "waifu_ai_bootstrap"
+version = "0.1.0"
+description = "Waifu AI bootstrap installer"
+authors = ["JCREATE1300"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0.0", features = [] }
+tauri-plugin-shell = "2.0.0"
+tauri-plugin-http = "2.0.0"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+reqwest = { version = "0.12", features = ["blocking", "rustls-tls"] }
+zip = "2.1"
+tempfile = "3.0"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

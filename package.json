@@ -1,33 +1,19 @@
 {
-  "name": "waifu-ai-installer-bootstrap",
+  "name": "waifu-ai-bootstrap",
   "version": "1.0.0",
-  "description": "Bootstrap installer for downloading and launching the latest Waifu AI desktop installer",
-  "author": "JCREATE1300",
-  "main": "main.js",
   "private": true,
+  "type": "module",
   "scripts": {
-    "build": "node -e \"console.log('Bootstrap app does not require a separate build step.')\"",
-    "start": "electron .",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder --win --publish never"
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri"
   },
   "dependencies": {
-    "adm-zip": "^0.5.16"
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-shell": "^2.0.0",
+    "@tauri-apps/plugin-http": "^2.0.0"
   },
   "devDependencies": {
-    "electron": "^31.0.0",
-    "electron-builder": "^24.13.0"
-  },
-  "build": {
-    "appId": "com.jcreate1300.waifuai.bootstrap",
-    "productName": "Waifu AI Bootstrap",
-    "directories": {
-      "output": "dist"
-    },
-    "win": {
-      "target": "nsis",
-      "artifactName": "waifu-ai-installer-bootstrap-${version}.exe",
-      "requestedExecutionLevel": "asInvoker"
-    }
+    "@tauri-apps/cli": "^2.0.0"
   }
 }
