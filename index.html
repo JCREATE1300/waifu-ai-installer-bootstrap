@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'" />
+    <title>Waifu AI Bootstrap</title>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --panel: rgba(15, 23, 42, 0.9);
+        --card: #111827;
+        --muted: #94a3b8;
+        --primary: #8b5cf6;
+        --accent: #22c55e;
+        --text: #e2e8f0;
+        --danger: #f87171;
+      }
+
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        background: radial-gradient(circle at top, #1e293b 0%, var(--bg) 45%);
+        color: var(--text);
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      }
+
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+      }
+
+      .window {
+        width: 560px;
+        min-height: 320px;
+        background: rgba(15, 23, 42, 0.82);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 22px;
+        box-shadow: 0 24px 80px rgba(0,0,0,0.55);
+        overflow: hidden;
+      }
+
+      .topbar {
+        height: 42px;
+        -webkit-app-region: drag;
+        background: rgba(15, 23, 42, 0.9);
+        border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+      }
+
+      .content {
+        padding: 26px 28px 22px;
+      }
+
+      .badge {
+        display: inline-block;
+        background: rgba(139, 92, 246, 0.15);
+        color: #c4b5fd;
+        border: 1px solid rgba(139, 92, 246, 0.5);
+        border-radius: 999px;
+        font-weight: 700;
+        font-size: 11px;
+        padding: 7px 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 18px 0 10px;
+        font-size: 28px;
+      }
+
+      .subtitle {
+        margin: 0 0 22px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .status-box {
+        width: 100%;
+        background: rgba(17, 24, 39, 0.9);
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        border-radius: 16px;
+        padding: 16px 14px;
+        color: #dbeafe;
+        min-height: 100px;
+        white-space: pre-wrap;
+        line-height: 1.5;
+        font-size: 14px;
+      }
+
+      .footer {
+        margin-top: 18px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .dot {
+        width: 10px;
+        height: 10px;
+        display: inline-block;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 15px rgba(34, 197, 94, 0.8);
+        margin-right: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="window">
+      <div class="topbar"></div>
+      <div class="content">
+        <div class="badge">Installer</div>
+        <h1>Waifu AI Update</h1>
+        <p class="subtitle">
+          Checking for the newest desktop build, downloading the installer, and launching it.
+        </p>
+
+        <div id="statusbox" class="status-box">Preparing…</div>
+
+        <div class="footer">
+          <span><span class="dot"></span>Secure bootstrap</span>
+          <span>Latest release workflow</span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const { ipcRenderer } = require("electron");
+
+      const statusBox = document.getElementById("statusbox");
+
+      ipcRenderer.on("status", (_event, message) => {
+        const text = String(message || "").trim();
+        statusBox.textContent = text || "Preparing…";
+      });
+    </script>
+  </body>
+</html>
