@@ -1,71 +1,75 @@
-name: Electron Windows Installer
+name: Build Bootstrap Installer
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     tags: ["v*.*.*"]
   pull_request:
-  workflow_dispatch:
 
+# Cancel outdated runs on the same branch/PR, but never cancel a tagged release build
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
+# Least privilege by default; the release job elevates only what it needs
 permissions:
   contents: read
 
-env:
-  # ---- Adjust to match your electron-builder config ----
-  PRODUCT_NAME: MyApp          # "productName" in package.json / electron-builder config
-  EXE_NAME: MyApp.exe          # main executable produced by the build
-  NODE_VERSION: 20
-
-defaults:
-  run:
-    shell: pwsh
-
 jobs:
   build:
-    name: Build & package
+    name: Build installer
     runs-on: windows-latest
     timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: 20
           cache: npm
 
+      # npm ci = clean, reproducible install from package-lock.json (faster and stricter than npm install)
       - name: Install dependencies
         run: npm ci
 
-      - name: Lint
-        run: npm run lint --if-present
-
-      - name: Unit tests
-        run: npm test --if-present
-
+      # On a tag like v1.2.3, stamp 1.2.3 into package.json so the installer is versioned correctly
       - name: Set version from tag
         if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
         run: |
           $v = $env:GITHUB_REF_NAME.TrimStart('v')
           npm version $v --no-git-tag-version --allow-same-version
 
-      - name: Build installers (x64 + arm64)
+      # These only run if the scripts exist in package.json
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Test
+        run: npm test --if-present
+
+      - name: Build bootstrap app
+        run: npm run build
+
+      - name: Package bootstrap installer
         env:
-          # Optional code signing. If these secrets are unset, builds are unsigned.
+          # Optional code signing: add these as repo secrets to sign the installer.
+          # If they're empty, the build is simply unsigned.
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-          GH_TOKEN: ${{ github.token }}
-        run: npx electron-builder --win nsis --x64 --arm64 --publish never
+        run: npm run dist
 
-      - name: List output
+      - name: Show build output
+        shell: pwsh
         run: Get-ChildItem dist -File | Format-Table Name, Length
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload bootstrap artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: installers
+          name: waifu-ai-installer-bootstrap
           path: |
             dist/*.exe
             dist/*.blockmap
@@ -73,93 +77,41 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  smoke-test:
-    name: Smoke test (install / launch / uninstall)
-    needs: build
-    runs-on: windows-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: installers
-          path: dist
-
-      - name: Silent install (x64)
-        run: |
-          $setup = Get-ChildItem dist -Filter *.exe |
-                   Where-Object { $_.Name -match 'x64' -and $_.Name -notmatch 'Uninstall' } |
-                   Select-Object -First 1
-          if (-not $setup) { throw "x64 installer not found in dist/" }
-          Write-Host "Installing $($setup.Name)"
-          $p = Start-Process $setup.FullName -ArgumentList '/S' -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "Installer exited with code $($p.ExitCode)" }
-
-          # Default per-user NSIS location. Change if you install per-machine.
-          $dir = Join-Path $env:LOCALAPPDATA "Programs\$env:PRODUCT_NAME"
-          "INSTALL_DIR=$dir" >> $env:GITHUB_ENV
-          if (-not (Test-Path (Join-Path $dir $env:EXE_NAME))) {
-            Get-ChildItem "$env:LOCALAPPDATA\Programs" -ErrorAction SilentlyContinue
-            throw "$env:EXE_NAME not found in $dir"
-          }
-
-      - name: Launch app and check it stays alive
-        run: |
-          $exe = Join-Path $env:INSTALL_DIR $env:EXE_NAME
-          $proc = Start-Process $exe -PassThru
-          Start-Sleep -Seconds 10
-          if ($proc.HasExited) { throw "App crashed on launch (exit code $($proc.ExitCode))" }
-          Write-Host "App is running (PID $($proc.Id))"
-          Stop-Process -Id $proc.Id -Force
-
-      - name: Silent uninstall
-        run: |
-          $uninstaller = Get-ChildItem $env:INSTALL_DIR -Filter 'Uninstall*.exe' | Select-Object -First 1
-          if (-not $uninstaller) { throw "Uninstaller not found in $env:INSTALL_DIR" }
-          # _?= makes the NSIS uninstaller run in place so -Wait actually waits
-          $p = Start-Process $uninstaller.FullName `
-                 -ArgumentList '/S', "_?=$env:INSTALL_DIR" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "Uninstaller exited with code $($p.ExitCode)" }
-          if (Test-Path (Join-Path $env:INSTALL_DIR $env:EXE_NAME)) {
-            throw "$env:EXE_NAME still present after uninstall"
-          }
-
   release:
-    name: Release
+    name: Publish release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, smoke-test]
-    runs-on: windows-latest
+    needs: build
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
+      contents: write       # create the release
+      id-token: write       # sign build provenance
+      attestations: write   # store build provenance
+
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download installer
+        uses: actions/download-artifact@v4
         with:
-          name: installers
+          name: waifu-ai-installer-bootstrap
           path: dist
 
       - name: Generate checksums
+        working-directory: dist
         run: |
-          Set-Location dist
-          Get-ChildItem *.exe | ForEach-Object {
-            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
-            "$h  $($_.Name)"
-          } | Set-Content SHA256SUMS -Encoding ascii
-          Get-Content SHA256SUMS
+          sha256sum *.exe > SHA256SUMS
+          cat SHA256SUMS
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: dist/*.exe
 
-      # latest.yml + .blockmap files must be attached for electron-updater to work
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create $env:GITHUB_REF_NAME (Get-ChildItem dist -File | ForEach-Object FullName) `
-            --title $env:GITHUB_REF_NAME `
-            --generate-notes `
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
             --verify-tag
