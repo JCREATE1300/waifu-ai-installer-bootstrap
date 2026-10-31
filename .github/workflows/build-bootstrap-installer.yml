@@ -1,36 +1,38 @@
-name: Windows Installer
+name: Build Bootstrap Installer
 
 on:
   workflow_dispatch:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
 
 jobs:
-  build-windows-installer:
+  build:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
       - name: Install dependencies
         run: npm install
 
-      - name: Build Next.js app
+      - name: Build bootstrap app
         run: npm run build
 
-      - name: Package Windows installer
+      - name: Package bootstrap installer
         run: npm run dist
 
-      - name: Upload Windows installer artifact
+      - name: Upload bootstrap artifact
         uses: actions/upload-artifact@v4
         with:
-          name: waifu-ai-bootstrap-installer
+          name: waifu-ai-installer-bootstrap
           path: dist/*.exe
           if-no-files-found: error
