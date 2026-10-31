@@ -1,4 +1,4 @@
-name: Windows Bootstrap Installer
+name: Electron Windows Installer
 
 on:
   push:
@@ -15,12 +15,10 @@ permissions:
   contents: read
 
 env:
-  # ---- Adjust these to your project ----
-  BUNDLE_PROJECT: installer/Bundle.wixproj   # your WiX bundle project
-  APP_NAME: MyApp                            # used for artifact names
-  EXPECTED_INSTALL_PATH: C:\Program Files\MyApp\myapp.exe  # file that must exist after install
-  DOTNET_NOLOGO: true
-  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  # ---- Adjust to match your electron-builder config ----
+  PRODUCT_NAME: MyApp          # "productName" in package.json / electron-builder config
+  EXE_NAME: MyApp.exe          # main executable produced by the build
+  NODE_VERSION: 20
 
 defaults:
   run:
@@ -28,110 +26,102 @@ defaults:
 
 jobs:
   build:
-    name: Build (${{ matrix.platform }})
+    name: Build & package
     runs-on: windows-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [x64, arm64]
-    outputs:
-      version: ${{ steps.ver.outputs.version }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-node@v4
         with:
-          dotnet-version: 8.0.x
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
 
-      - name: Cache NuGet packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.wixproj', '**/*.csproj', '**/packages.lock.json') }}
-          restore-keys: nuget-${{ runner.os }}-
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Compute version
-        id: ver
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Unit tests
+        run: npm test --if-present
+
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          if ($env:GITHUB_REF -like 'refs/tags/v*') {
-            $base = $env:GITHUB_REF_NAME.TrimStart('v')
-          } else {
-            $base = '0.0.0'
-          }
-          # Burn/MSI need a numeric version: major.minor.build.revision
-          $parts = ($base -split '[-+]')[0] -split '\.'
-          while ($parts.Count -lt 3) { $parts += '0' }
-          $version = "$($parts[0..2] -join '.').$env:GITHUB_RUN_NUMBER"
-          "version=$version" >> $env:GITHUB_OUTPUT
-          Write-Host "Version: $version"
+          $v = $env:GITHUB_REF_NAME.TrimStart('v')
+          npm version $v --no-git-tag-version --allow-same-version
 
-      - name: Build bundle
-        run: |
-          dotnet build $env:BUNDLE_PROJECT `
-            --configuration Release `
-            -p:Platform=${{ matrix.platform }} `
-            -p:Version=${{ steps.ver.outputs.version }} `
-            -p:InstallerVersion=${{ steps.ver.outputs.version }}
+      - name: Build installers (x64 + arm64)
+        env:
+          # Optional code signing. If these secrets are unset, builds are unsigned.
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          GH_TOKEN: ${{ github.token }}
+        run: npx electron-builder --win nsis --x64 --arm64 --publish never
 
-      - name: Collect installer
-        run: |
-          $exe = Get-ChildItem (Split-Path $env:BUNDLE_PROJECT) -Recurse -Filter *.exe |
-                 Where-Object { $_.FullName -match 'Release' } |
-                 Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if (-not $exe) { throw "No installer .exe found after build." }
-          New-Item -ItemType Directory -Force dist | Out-Null
-          $name = "$env:APP_NAME-Setup-${{ matrix.platform }}-${{ steps.ver.outputs.version }}.exe"
-          Copy-Item $exe.FullName "dist\$name"
-          Get-Item "dist\$name" | Format-List Name, Length
+      - name: List output
+        run: Get-ChildItem dist -File | Format-Table Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
-          name: installer-${{ matrix.platform }}
-          path: dist/*.exe
+          name: installers
+          path: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest*.yml
           if-no-files-found: error
           retention-days: 14
 
   smoke-test:
-    name: Smoke test (install / uninstall)
+    name: Smoke test (install / launch / uninstall)
     needs: build
-    runs-on: windows-latest   # x64 runner
+    runs-on: windows-latest
     timeout-minutes: 15
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: installer-x64
+          name: installers
           path: dist
 
-      - name: Silent install
+      - name: Silent install (x64)
         run: |
-          $setup = (Get-ChildItem dist -Filter *.exe | Select-Object -First 1).FullName
-          $p = Start-Process $setup -ArgumentList '/quiet', '/norestart', '/log', "$PWD\install.log" `
-               -Wait -PassThru
-          Write-Host "Exit code: $($p.ExitCode)"
-          # 0 = success, 3010 = success (reboot required)
-          if ($p.ExitCode -notin 0, 3010) { throw "Install failed with exit code $($p.ExitCode)" }
-          if (-not (Test-Path $env:EXPECTED_INSTALL_PATH)) {
-            throw "Expected file not found: $env:EXPECTED_INSTALL_PATH"
+          $setup = Get-ChildItem dist -Filter *.exe |
+                   Where-Object { $_.Name -match 'x64' -and $_.Name -notmatch 'Uninstall' } |
+                   Select-Object -First 1
+          if (-not $setup) { throw "x64 installer not found in dist/" }
+          Write-Host "Installing $($setup.Name)"
+          $p = Start-Process $setup.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Installer exited with code $($p.ExitCode)" }
+
+          # Default per-user NSIS location. Change if you install per-machine.
+          $dir = Join-Path $env:LOCALAPPDATA "Programs\$env:PRODUCT_NAME"
+          "INSTALL_DIR=$dir" >> $env:GITHUB_ENV
+          if (-not (Test-Path (Join-Path $dir $env:EXE_NAME))) {
+            Get-ChildItem "$env:LOCALAPPDATA\Programs" -ErrorAction SilentlyContinue
+            throw "$env:EXE_NAME not found in $dir"
           }
+
+      - name: Launch app and check it stays alive
+        run: |
+          $exe = Join-Path $env:INSTALL_DIR $env:EXE_NAME
+          $proc = Start-Process $exe -PassThru
+          Start-Sleep -Seconds 10
+          if ($proc.HasExited) { throw "App crashed on launch (exit code $($proc.ExitCode))" }
+          Write-Host "App is running (PID $($proc.Id))"
+          Stop-Process -Id $proc.Id -Force
 
       - name: Silent uninstall
         run: |
-          $setup = (Get-ChildItem dist -Filter *.exe | Select-Object -First 1).FullName
-          $p = Start-Process $setup -ArgumentList '/uninstall', '/quiet', '/norestart', '/log', "$PWD\uninstall.log" `
-               -Wait -PassThru
-          if ($p.ExitCode -notin 0, 3010) { throw "Uninstall failed with exit code $($p.ExitCode)" }
-          if (Test-Path $env:EXPECTED_INSTALL_PATH) {
-            throw "Files left behind after uninstall: $env:EXPECTED_INSTALL_PATH"
+          $uninstaller = Get-ChildItem $env:INSTALL_DIR -Filter 'Uninstall*.exe' | Select-Object -First 1
+          if (-not $uninstaller) { throw "Uninstaller not found in $env:INSTALL_DIR" }
+          # _?= makes the NSIS uninstaller run in place so -Wait actually waits
+          $p = Start-Process $uninstaller.FullName `
+                 -ArgumentList '/S', "_?=$env:INSTALL_DIR" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Uninstaller exited with code $($p.ExitCode)" }
+          if (Test-Path (Join-Path $env:INSTALL_DIR $env:EXE_NAME)) {
+            throw "$env:EXE_NAME still present after uninstall"
           }
-
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: install-logs
-          path: "*.log"
-          if-no-files-found: ignore
 
   release:
     name: Release
@@ -146,9 +136,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: installer-*
+          name: installers
           path: dist
-          merge-multiple: true
 
       - name: Generate checksums
         run: |
@@ -162,14 +151,15 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: dist/*
+          subject-path: dist/*.exe
 
+      # latest.yml + .blockmap files must be attached for electron-updater to work
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create $env:GITHUB_REF_NAME (Get-ChildItem dist | ForEach-Object FullName) `
+          gh release create $env:GITHUB_REF_NAME (Get-ChildItem dist -File | ForEach-Object FullName) `
             --title $env:GITHUB_REF_NAME `
             --generate-notes `
             --verify-tag
