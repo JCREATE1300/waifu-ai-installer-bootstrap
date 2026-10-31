@@ -5,6 +5,7 @@
   "main": "main.js",
   "private": true,
   "scripts": {
+    "build": "node -e \"console.log('Bootstrap app does not require a separate build step.')\"",
     "start": "electron .",
     "pack": "electron-builder --dir",
     "dist": "electron-builder --win --publish never"
