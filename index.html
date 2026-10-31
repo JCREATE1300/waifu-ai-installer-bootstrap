@@ -2,99 +2,74 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
-    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Waifu AI Bootstrap</title>
     <style>
       :root {
         --bg: #0f172a;
-        --panel: rgba(15, 23, 42, 0.9);
-        --card: #111827;
+        --card: rgba(15, 23, 42, 0.9);
         --muted: #94a3b8;
         --primary: #8b5cf6;
-        --accent: #22c55e;
         --text: #e2e8f0;
+        --good: #22c55e;
       }
 
-      * {
-        box-sizing: border-box;
-      }
-
-      html,
+      * { box-sizing: border-box; }
       body {
         margin: 0;
-        width: 100%;
-        height: 100%;
-        background: radial-gradient(circle at top, #1e293b 0%, var(--bg) 45%);
+        background: radial-gradient(circle at top, #1e293b 0%, #0f172a 45%);
         color: var(--text);
-        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-      }
-
-      body {
+        font-family: "Segoe UI", sans-serif;
         display: flex;
-        align-items: center;
         justify-content: center;
-        padding: 20px;
+        align-items: center;
+        height: 100vh;
       }
 
-      .window {
+      .panel {
         width: 560px;
         min-height: 320px;
-        background: rgba(15, 23, 42, 0.82);
-        border: 1px solid rgba(148, 163, 184, 0.2);
+        background: rgba(15, 23, 42, 0.85);
+        border: 1px solid rgba(148, 163, 184, 0.18);
         border-radius: 22px;
-        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
-        overflow: hidden;
-      }
-
-      .topbar {
-        height: 42px;
-        -webkit-app-region: drag;
-        background: rgba(15, 23, 42, 0.9);
-        border-bottom: 1px solid rgba(148, 163, 184, 0.14);
-      }
-
-      .content {
-        padding: 26px 28px 22px;
+        padding: 26px 28px 18px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
       }
 
       .badge {
         display: inline-block;
         background: rgba(139, 92, 246, 0.15);
-        color: #c4b5fd;
         border: 1px solid rgba(139, 92, 246, 0.5);
+        color: #c4b5fd;
+        padding: 7px 12px;
         border-radius: 999px;
-        font-weight: 700;
         font-size: 11px;
-        padding: 7px 11px;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.12em;
         text-transform: uppercase;
+        font-weight: 700;
       }
 
       h1 {
-        margin: 18px 0 10px;
-        font-size: 28px;
+        margin: 18px 0 8px;
+        font-size: 3rem;
+        line-height: 1.05;
       }
 
       .subtitle {
         margin: 0 0 22px;
         color: var(--muted);
+        font-size: 1.15rem;
         line-height: 1.5;
       }
 
-      .status-box {
-        width: 100%;
+      .status {
         background: rgba(17, 24, 39, 0.9);
-        border: 1px solid rgba(148, 163, 184, 0.12);
+        border: 1px solid rgba(148, 163, 184, 0.15);
         border-radius: 16px;
-        padding: 16px 14px;
-        color: #dbeafe;
         min-height: 100px;
+        padding: 14px 16px;
+        color: #dbeafe;
         white-space: pre-wrap;
-        line-height: 1.5;
-        font-size: 14px;
       }
 
       .footer {
@@ -103,7 +78,7 @@
         justify-content: space-between;
         align-items: center;
         color: var(--muted);
-        font-size: 12px;
+        font-size: 0.85rem;
       }
 
       .dot {
@@ -111,40 +86,41 @@
         height: 10px;
         display: inline-block;
         border-radius: 50%;
-        background: var(--accent);
+        background: var(--good);
         box-shadow: 0 0 15px rgba(34, 197, 94, 0.8);
         margin-right: 8px;
       }
     </style>
   </head>
   <body>
-    <div class="window">
-      <div class="topbar"></div>
-      <div class="content">
-        <div class="badge">Installer</div>
-        <h1>Waifu AI Update</h1>
-        <p class="subtitle">
-          Checking for the newest desktop build, downloading the installer, and launching it.
-        </p>
+    <div class="panel">
+      <div class="badge">Installer</div>
+      <h1>Waifu AI Update</h1>
+      <p class="subtitle">Checking for the newest desktop build, downloading the installer, and launching it.</p>
 
-        <div id="statusbox" class="status-box">Preparing…</div>
+      <div id="status" class="status">Preparing…</div>
 
-        <div class="footer">
-          <span><span class="dot"></span>Secure bootstrap</span>
-          <span>Latest release workflow</span>
-        </div>
+      <div class="footer">
+        <span><span class="dot"></span>Secure bootstrap</span>
+        <span>Latest release workflow</span>
       </div>
     </div>
 
-    <script>
-      const { ipcRenderer } = require("electron");
+    <script type="module">
+      const { invoke } = window.__TAURI__.core;
+      const statusEl = document.getElementById("status");
 
-      const statusBox = document.getElementById("statusbox");
+      const downloadUrl = "https://github.com/JCREATE1300/waifu-ai-desktop/releases/download/v0.1.0/waifu-ai-desktop-0.1.0.exe";
 
-      ipcRenderer.on("status", (_event, message) => {
-        const text = String(message || "").trim();
-        statusBox.textContent = text || "Preparing…";
-      });
+      statusEl.textContent = "Downloading installer...";
+
+      invoke("download_and_run", { url: downloadUrl })
+        .then((result) => {
+          statusEl.textContent = result;
+        })
+        .catch((error) => {
+          statusEl.textContent = error;
+        });
     </script>
   </body>
 </html>
