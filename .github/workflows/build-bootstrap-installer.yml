@@ -1,36 +1,175 @@
-name: Windows Installer
+name: Windows Bootstrap Installer
 
 on:
-  workflow_dispatch:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+env:
+  # ---- Adjust these to your project ----
+  BUNDLE_PROJECT: installer/Bundle.wixproj   # your WiX bundle project
+  APP_NAME: MyApp                            # used for artifact names
+  EXPECTED_INSTALL_PATH: C:\Program Files\MyApp\myapp.exe  # file that must exist after install
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+defaults:
+  run:
+    shell: pwsh
 
 jobs:
-  build-windows-installer:
+  build:
+    name: Build (${{ matrix.platform }})
     runs-on: windows-latest
-
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [x64, arm64]
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-dotnet@v4
         with:
-          node-version: 20
+          dotnet-version: 8.0.x
 
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build Next.js app
-        run: npm run build
-
-      - name: Package Windows installer
-        run: npm run dist
-
-      - name: Upload Windows installer artifact
-        uses: actions/upload-artifact@v4
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
         with:
-          name: waifu-ai-bootstrap-installer
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.wixproj', '**/*.csproj', '**/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Compute version
+        id: ver
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $base = $env:GITHUB_REF_NAME.TrimStart('v')
+          } else {
+            $base = '0.0.0'
+          }
+          # Burn/MSI need a numeric version: major.minor.build.revision
+          $parts = ($base -split '[-+]')[0] -split '\.'
+          while ($parts.Count -lt 3) { $parts += '0' }
+          $version = "$($parts[0..2] -join '.').$env:GITHUB_RUN_NUMBER"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Version: $version"
+
+      - name: Build bundle
+        run: |
+          dotnet build $env:BUNDLE_PROJECT `
+            --configuration Release `
+            -p:Platform=${{ matrix.platform }} `
+            -p:Version=${{ steps.ver.outputs.version }} `
+            -p:InstallerVersion=${{ steps.ver.outputs.version }}
+
+      - name: Collect installer
+        run: |
+          $exe = Get-ChildItem (Split-Path $env:BUNDLE_PROJECT) -Recurse -Filter *.exe |
+                 Where-Object { $_.FullName -match 'Release' } |
+                 Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $exe) { throw "No installer .exe found after build." }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $name = "$env:APP_NAME-Setup-${{ matrix.platform }}-${{ steps.ver.outputs.version }}.exe"
+          Copy-Item $exe.FullName "dist\$name"
+          Get-Item "dist\$name" | Format-List Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.platform }}
           path: dist/*.exe
           if-no-files-found: error
+          retention-days: 14
+
+  smoke-test:
+    name: Smoke test (install / uninstall)
+    needs: build
+    runs-on: windows-latest   # x64 runner
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer-x64
+          path: dist
+
+      - name: Silent install
+        run: |
+          $setup = (Get-ChildItem dist -Filter *.exe | Select-Object -First 1).FullName
+          $p = Start-Process $setup -ArgumentList '/quiet', '/norestart', '/log', "$PWD\install.log" `
+               -Wait -PassThru
+          Write-Host "Exit code: $($p.ExitCode)"
+          # 0 = success, 3010 = success (reboot required)
+          if ($p.ExitCode -notin 0, 3010) { throw "Install failed with exit code $($p.ExitCode)" }
+          if (-not (Test-Path $env:EXPECTED_INSTALL_PATH)) {
+            throw "Expected file not found: $env:EXPECTED_INSTALL_PATH"
+          }
+
+      - name: Silent uninstall
+        run: |
+          $setup = (Get-ChildItem dist -Filter *.exe | Select-Object -First 1).FullName
+          $p = Start-Process $setup -ArgumentList '/uninstall', '/quiet', '/norestart', '/log', "$PWD\uninstall.log" `
+               -Wait -PassThru
+          if ($p.ExitCode -notin 0, 3010) { throw "Uninstall failed with exit code $($p.ExitCode)" }
+          if (Test-Path $env:EXPECTED_INSTALL_PATH) {
+            throw "Files left behind after uninstall: $env:EXPECTED_INSTALL_PATH"
+          }
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-logs
+          path: "*.log"
+          if-no-files-found: ignore
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, smoke-test]
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          Set-Location dist
+          Get-ChildItem *.exe | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$h  $($_.Name)"
+          } | Set-Content SHA256SUMS -Encoding ascii
+          Get-Content SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME (Get-ChildItem dist | ForEach-Object FullName) `
+            --title $env:GITHUB_REF_NAME `
+            --generate-notes `
+            --verify-tag
