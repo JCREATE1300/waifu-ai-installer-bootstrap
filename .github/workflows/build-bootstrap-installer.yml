@@ -1,0 +1,38 @@
+name: Build Bootstrap Installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-bootstrap-installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build bootstrap installer
+        env:
+          APP_REPO_OWNER: JCREATE1300
+          APP_REPO_NAME: waifu-ai-desktop
+          APP_REPO_TOKEN: ${{ secrets.APP_REPO_TOKEN }}
+        run: npm run dist
+
+      - name: Upload bootstrap installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: waifu-ai-installer-bootstrap
+          path: dist/*.exe
+          if-no-files-found: error
