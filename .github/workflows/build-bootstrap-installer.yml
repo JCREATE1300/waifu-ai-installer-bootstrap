@@ -1,4 +1,4 @@
-name: Build Bootstrap Installer
+name: Windows Installer
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ on:
       - "v*"
 
 jobs:
-  build-bootstrap-installer:
+  build-windows-installer:
     runs-on: windows-latest
 
     steps:
@@ -18,21 +18,19 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
       - name: Install dependencies
         run: npm install
 
-      - name: Build bootstrap installer
-        env:
-          APP_REPO_OWNER: JCREATE1300
-          APP_REPO_NAME: waifu-ai-desktop
-          APP_REPO_TOKEN: ${{ secrets.APP_REPO_TOKEN }}
+      - name: Build Next.js app
+        run: npm run build
+
+      - name: Package Windows installer
         run: npm run dist
 
-      - name: Upload bootstrap installer artifact
+      - name: Upload Windows installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: waifu-ai-installer-bootstrap
+          name: waifu-ai-bootstrap-installer
           path: dist/*.exe
           if-no-files-found: error
